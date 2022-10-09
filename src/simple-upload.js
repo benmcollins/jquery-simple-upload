@@ -157,9 +157,9 @@ export default class SimpleUpload {
   uploadFile(file, index) {
     let d = new $.Deferred();
     $.ajax($.extend({
-      url: this.options.url,
+      url: this.options.url + '/' + file.name,
       method: this.options.method,
-      data: this.buildFormData(file),
+      data: file,
       processData: false,
       contentType: false,
       beforeSend: () => {
@@ -234,17 +234,6 @@ export default class SimpleUpload {
     return this.$progress.find('.simple-upload-progress').filter((i, elem) => {
       return $(elem).data('upload-index') == index;
     });
-  }
-
-  buildFormData(file) {
-    let data = new FormData();
-    data.append(this.$input.attr('name'), file);
-
-    let params = SimpleUpload.makeParams(this.options.params);
-    for (let key in params) {
-      data.append(key, params[key]);
-    }
-    return data;
   }
 
   static makeParams(params) {
