@@ -5,16 +5,8 @@ import { NAMESPACE } from './consts';
 
 const DEFAULTS = {
   url: '',
-  method: 'post',
-  params: {},
-  ajax: {},
   dropZone: null,
   progress: null,
-  validator: null,
-  maxFileSize: null,
-  maxFileNum: null,
-  allowedFileName: null,
-  allowedMimeType: null
 };
 
 export default class SimpleUpload {
@@ -25,9 +17,11 @@ export default class SimpleUpload {
     this.$dropZone = $(this.options.dropZone);
     this.$progress = $(this.options.progress);
 
-    this.uid = new Date().getTime() + Math.random();
-    this.namespace = `${NAMESPACE}-${this.uid}`;
+    let uid = new Date().getTime() + Math.random();
+    this.namespace = `${NAMESPACE}-${uid}`;
 
+    this.totalSize = 0;
+    this.uploaded = 0;
     this.dragCounter = 0;
 
     this.init();
@@ -96,54 +90,14 @@ export default class SimpleUpload {
   }
 
   process(files) {
-    if (this.$input.prop('disabled')) return;
-
-    if (this.options.maxFileNum && files.length > this.options.maxFileNum) {
-      this.$input.trigger('upload:over', [files]);
+    if (this.$input.prop('disabled'))
       return;
-    }
 
-    let processFiles = files;
-    if (this.options.validator) processFiles = this.options.validator(processFiles);
-
-    let [passedFiles, rejectedFiles] = this.validate(processFiles)
-
-    if (rejectedFiles.length > 0) {
-      this.$input.trigger('upload:invalid', [rejectedFiles]);
-    }
-    if (passedFiles.length > 0) {
-      this.uploadFiles(passedFiles);
-    }
-  }
-
-  validate(files) {
-    let passed = [], rejected = [];
-
-    for (let i=0; i<files.length; i++) {
-      let file = files[i];
-      if (this.options.maxFileSize && file.size > this.options.maxFileSize) {
-        file.reason = 'size';
-        rejected.push(file);
-      } else if (this.options.allowedFileName && !file.name.match(this.options.allowedFileName)) {
-        file.reason = 'name';
-        rejected.push(file);
-      } else if (this.options.allowedMimeType && !file.type.match(this.options.allowedMimeType)) {
-        file.reason = 'type';
-        rejected.push(file);
-      } else {
-        passed.push(file);
-      }
-    }
-
-    return [passed, rejected];
-  }
-
-  uploadFiles(files) {
     this.$input.prop('disabled', true);
     this.before(files);
 
     let d = (new $.Deferred()).resolve();
-    for (let i=0; i<files.length; i++) {
+    for (let i = 0; i < files.length; i++) {
       d = d.then(() => {
         return this.uploadFile(files[i], i)
       });
@@ -158,13 +112,10 @@ export default class SimpleUpload {
     let d = new $.Deferred();
     $.ajax($.extend({
       url: this.options.url + '/' + file.name,
-      method: this.options.method,
+      method: 'PUT',
       data: file,
       processData: false,
       contentType: false,
-      beforeSend: () => {
-        this.start(file, index);
-      },
       xhr: () => {
         let xhr = $.ajaxSettings.xhr();
         if (xhr.upload) {
@@ -173,7 +124,7 @@ export default class SimpleUpload {
           }, false);
         }
         return xhr;
-      }}, this.options.ajax)
+      }}, {})
     ).done((data, status, xhr) => {
       this.done(file, index, data, status, xhr);
     }).fail((xhr, status, error) => {
@@ -186,10 +137,15 @@ export default class SimpleUpload {
   }
 
   before(files) {
+    this.totalSize = 0;
+    this.uploaded = 0;
+
     if (this.$progress.length) {
-      files.forEach((file, index) => {
-        this.buildProgress(file, index);
-      });
+      for (let i = 0; i < files.length; i++) {
+        let file = files[i];
+        this.buildProgress(file, i);
+        this.totalSize += file.size;
+      }
     }
 
     this.$input.trigger('upload:before', [files]);
@@ -199,14 +155,10 @@ export default class SimpleUpload {
     this.$input.trigger('upload:after', [files]);
   }
 
-  start(file, index) {
-    this.$input.trigger('upload:start', [file, index]);
-  }
-
   progress(file, index, loaded, total) {
     this.findProgress(index).find('.simple-upload-percent').text(Math.ceil((loaded/total)*100) + '%');
 
-    this.$input.trigger('upload:progress', [file, index, loaded, total]);
+    this.$input.trigger('upload:progress', [this.uploaded, this.totalSize, loaded]);
   }
 
   done(file, index, data, status, xhr) {
@@ -219,6 +171,7 @@ export default class SimpleUpload {
 
   end(file, index) {
     this.findProgress(index).hide('fast', (elem) => $(elem).remove());
+    this.uploaded += file.size;
 
     this.$input.trigger('upload:end', [file, index]);
   }
@@ -234,33 +187,5 @@ export default class SimpleUpload {
     return this.$progress.find('.simple-upload-progress').filter((i, elem) => {
       return $(elem).data('upload-index') == index;
     });
-  }
-
-  static makeParams(params) {
-    let data = {}
-
-    switch (Object.prototype.toString.call(params)) {
-    case '[object Function]':
-      data = params();
-      break;
-    case '[object Array]':
-      params.forEach((item)=> {
-        data[item.name] = item.value;
-      });
-      break;
-    case '[object Object]':
-      $.extend(data, params);
-      break;
-    }
-
-    return data;
-  }
-
-  static getDefaults() {
-    return DEFAULTS;
-  }
-
-  static setDefaults(options) {
-    return $.extend(DEFAULTS, options);
   }
 }
