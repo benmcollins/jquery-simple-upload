@@ -47,7 +47,6 @@ export default class SimpleUpload {
   bind() {
     this.$input.on(`change.${this.namespace}`, (e) => {
       this.process(e.target.files);
-      e.target.value = '';
     });
 
     if (this.$dropZone.length) {
@@ -99,7 +98,8 @@ export default class SimpleUpload {
     let d = (new $.Deferred()).resolve();
     for (let i = 0; i < files.length; i++) {
       d = d.then(() => {
-        return this.uploadFile(files[i], i)
+        let file = files[i];
+        return this.uploadFile(file, i)
       });
     }
     d.then(() => {
@@ -152,6 +152,7 @@ export default class SimpleUpload {
   }
 
   after(files) {
+    this.$input.value = '';
     this.$input.trigger('upload:after', [files]);
   }
 
