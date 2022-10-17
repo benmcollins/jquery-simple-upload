@@ -203,7 +203,11 @@ export default class SimpleUpload {
     ).done((data, status, xhr) => {
       this.done(dir, index, data, status, xhr);
     }).fail((xhr, status, error) => {
-      this.fail(dir, index, xhr, status, error);
+      console.log(xhr.status);
+      if (xhr.status == 405)
+        this.done(dir, index, xhr, status, error);
+      else
+        this.fail(dir, index, xhr, status, error);
     }).always(() => {
       d.resolve();
     });
