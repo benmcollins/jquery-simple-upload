@@ -6,8 +6,78 @@ import { NAMESPACE } from './consts';
 const DEFAULTS = {
   url: '',
   dropZone: null,
-  progress: null,
 };
+
+var entryList = [];
+var totalSize = 0;
+
+function basename(path) {
+   return path.split('/').reverse()[0];
+}
+
+async function processItems(dataTransferItemList)
+{
+  let entries = [];
+
+  for (let i = 0; i < dataTransferItemList.length; i++) {
+    let item = dataTransferItemList[i];
+
+    if (typeof item.webkitGetAsEntry === "function")
+      entries.push(item.webkitGetAsEntry());
+    else if (typeof item.getAsEntry === "function")
+      entries.push(item.getAsEntry());
+  }
+
+  await handleEntries(entries);
+}
+
+async function handleEntries(entries)
+{
+  while(entries.length > 0) {
+    let entry = entries.shift();
+
+    if (entry.isDirectory) {
+      entryList.push(entry);
+
+      let newentries = await readAllDirectoryEntries(entry);
+      await handleEntries(newentries);
+    } else if (entry.isFile) {
+      await new Promise((resolve, reject) => {
+        entry.file((file) => {
+          totalSize += file.size;
+          file.fullPath = entry.fullPath;
+          entryList.push(file);
+          resolve();
+        });
+      });
+    }
+  }
+}
+
+async function readAllDirectoryEntries(dirEntry)
+{
+  let reader = dirEntry.createReader();
+  let entries = [];
+  let readEntries = await readEntriesPromise(reader);
+
+  while (readEntries.length > 0) {
+    entries.push(...readEntries);
+    readEntries = await readEntriesPromise(reader);
+  }
+
+  return entries;
+}
+
+async function readEntriesPromise(directoryReader)
+{
+  try {
+    return await new Promise((resolve, reject) => {
+      directoryReader.readEntries(resolve, reject);
+    });
+  } catch (err) {
+    console.log(err);
+  }
+}
 
 export default class SimpleUpload {
   constructor(input, options = {}) {
@@ -15,12 +85,11 @@ export default class SimpleUpload {
 
     this.$input = $(input);
     this.$dropZone = $(this.options.dropZone);
-    this.$progress = $(this.options.progress);
 
     let uid = new Date().getTime() + Math.random();
     this.namespace = `${NAMESPACE}-${uid}`;
 
-    this.totalSize = 0;
+    totalSize = 0;
     this.uploaded = 0;
     this.dragCounter = 0;
 
@@ -30,7 +99,6 @@ export default class SimpleUpload {
   init() {
     this.$input.addClass(NAMESPACE);
     this.$dropZone.addClass(NAMESPACE).addClass('simple-upload-droppable');
-    this.$progress.addClass(NAMESPACE);
 
     this.unbind();
     this.bind();
@@ -39,41 +107,48 @@ export default class SimpleUpload {
   destroy() {
     this.$input.removeClass(NAMESPACE);
     this.$dropZone.removeClass(NAMESPACE).removeClass('simple-upload-droppable');
-    this.$progress.removeClass(NAMESPACE);
 
     this.unbind();
   }
 
   bind() {
     this.$input.on(`change.${this.namespace}`, (e) => {
+      totalSize = 0;
+      for (let i = 0; i < e.target.files.length; i++)
+        totalSize += e.target.files[i].size;
+
       this.process(e.target.files);
     });
 
-    if (this.$dropZone.length) {
-      this.$dropZone.on(`drop.${this.namespace}`, (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.dragCounter = 0;
-        this.$dropZone.removeClass('simple-upload-dragover');
-        this.process(e.originalEvent.dataTransfer.files);
-      }).on(`dragenter.${this.namespace}`, (e) => {
-        e.preventDefault();
-        this.dragCounter++;
-        this.$dropZone.addClass('simple-upload-dragover');
-      }).on(`dragleave.${this.namespace}`, (e) => {
-        e.preventDefault();
-        this.dragCounter--;
-        if (this.dragCounter == 0) {
-          this.$dropZone.removeClass('simple-upload-dragover');
-        }
-      });
+    this.$dropZone.on(`drop.${this.namespace}`, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.dragCounter = 0;
+      this.$dropZone.removeClass('simple-upload-dragover');
 
-      $(document).on(`drop.${this.namespace}`, (e) => {
-        e.preventDefault();
-      }).on(`dragover.${this.namespace}`, (e) => {
-        e.preventDefault();
+      totalSize = 0;
+      entryList = [];
+
+      processItems(e.originalEvent.dataTransfer.items).then(result => {
+        this.process(entryList);
       });
-    }
+    }).on(`dragenter.${this.namespace}`, (e) => {
+      e.preventDefault();
+      this.dragCounter++;
+      this.$dropZone.addClass('simple-upload-dragover');
+    }).on(`dragleave.${this.namespace}`, (e) => {
+      e.preventDefault();
+      this.dragCounter--;
+      if (this.dragCounter == 0) {
+        this.$dropZone.removeClass('simple-upload-dragover');
+      }
+    });
+
+    $(document).on(`drop.${this.namespace}`, (e) => {
+      e.preventDefault();
+    }).on(`dragover.${this.namespace}`, (e) => {
+      e.preventDefault();
+    });
   }
 
   unbind() {
@@ -88,30 +163,58 @@ export default class SimpleUpload {
     }
   }
 
-  process(files) {
-    if (this.$input.prop('disabled'))
-      return;
-
-    this.$input.prop('disabled', true);
-    this.before(files);
+  process(items) {
+    this.before(items);
 
     let d = (new $.Deferred()).resolve();
-    for (let i = 0; i < files.length; i++) {
+
+    for (let i = 0; i < items.length; i++) {
       d = d.then(() => {
-        let file = files[i];
-        return this.uploadFile(file, i)
+        let item = items[i];
+        if (typeof item.isDirectory !== 'undefined' && item.isDirectory) {
+          return this.mkcol(item.fullPath, i).then();
+        } else {
+          return this.uploadFile(item, i)
+        }
       });
     }
+
     d.then(() => {
-      this.after(files);
-      this.$input.prop('disabled', false);
+      this.after();
     })
+  }
+
+  mkcol(dir, index) {
+    let d = new $.Deferred();
+    this.progress(true, basename(dir), index, 0, 0, 0);
+    $.ajax($.extend({
+      url: this.options.url + dir,
+      method: 'MKCOL',
+      processData: false,
+      contentType: false,
+      xhr: () => {
+        let xhr = $.ajaxSettings.xhr();
+        if (xhr.upload) {
+          xhr.upload.addEventListener('progress', (e) => {
+          }, false);
+        }
+        return xhr;
+      }}, {})
+    ).done((data, status, xhr) => {
+      this.done(dir, index, data, status, xhr);
+    }).fail((xhr, status, error) => {
+      this.fail(dir, index, xhr, status, error);
+    }).always(() => {
+      d.resolve();
+    });
+    return d.promise();
   }
 
   uploadFile(file, index) {
     let d = new $.Deferred();
+    let path = file.fullPath ? file.fullPath : '/' + file.name;
     $.ajax($.extend({
-      url: this.options.url + '/' + file.name,
+      url: this.options.url + path,
       method: 'PUT',
       data: file,
       processData: false,
@@ -120,7 +223,7 @@ export default class SimpleUpload {
         let xhr = $.ajaxSettings.xhr();
         if (xhr.upload) {
           xhr.upload.addEventListener('progress', (e) => {
-            this.progress(file, index, e.loaded, e.total);
+            this.progress(false, file.name, index, e.loaded, totalSize, this.uploaded);
           }, false);
         }
         return xhr;
@@ -136,30 +239,18 @@ export default class SimpleUpload {
     return d.promise();
   }
 
-  before(files) {
-    this.totalSize = 0;
+  before(list) {
     this.uploaded = 0;
-
-    if (this.$progress.length) {
-      for (let i = 0; i < files.length; i++) {
-        let file = files[i];
-        this.buildProgress(file, i);
-        this.totalSize += file.size;
-      }
-    }
-
-    this.$input.trigger('upload:before', [files]);
+    this.$input.trigger('upload:before', [list]);
   }
 
-  after(files) {
+  after() {
     this.$input.value = '';
-    this.$input.trigger('upload:after', [files]);
+    this.$input.trigger('upload:after');
   }
 
-  progress(file, index, loaded, total) {
-    this.findProgress(index).find('.simple-upload-percent').text(Math.ceil((loaded/total)*100) + '%');
-
-    this.$input.trigger('upload:progress', [this.uploaded, this.totalSize, loaded]);
+  progress(isDir, file, index, loaded, total, countDone) {
+    this.$input.trigger('upload:progress', [isDir, file, index, loaded, total, countDone]);
   }
 
   done(file, index, data, status, xhr) {
@@ -171,22 +262,8 @@ export default class SimpleUpload {
   }
 
   end(file, index) {
-    this.findProgress(index).hide('fast', (elem) => $(elem).remove());
     this.uploaded += file.size;
 
     this.$input.trigger('upload:end', [file, index]);
-  }
-
-  buildProgress(file, index) {
-    let $p = $('<div>').addClass('simple-upload-progress').data('upload-index', index);
-    $('<span>').addClass('simple-upload-filename').text(file.name).appendTo($p);
-    $('<span>').addClass('simple-upload-percent').text('...').appendTo($p);
-    this.$progress.append($p);
-  }
-
-  findProgress(index) {
-    return this.$progress.find('.simple-upload-progress').filter((i, elem) => {
-      return $(elem).data('upload-index') == index;
-    });
   }
 }

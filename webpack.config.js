@@ -3,6 +3,8 @@ var webpack = require("webpack");
 module.exports = {
   mode: "production",
 
+  devtool: "source-map",
+
   entry: {
     "jquery-simple-upload": "./src/jquery-simple-upload.js"
   },

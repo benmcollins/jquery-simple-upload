@@ -18,6 +18,7 @@
     "start": "webpack-dev-server --mode development",
     "watch": "webpack --mode development --watch",
     "build": "webpack --mode production",
+    "debug": "webpack --devtool source-map --mode development",
     "test": "karma start"
   },
   "dependencies": {
